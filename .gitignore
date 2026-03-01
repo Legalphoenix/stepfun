@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.DS_Store
+request_logs/
+models/
+Step-Audio-R1/
+Step-Audio-R1.1/
+.env
