@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
+from pathlib import Path
 from typing import Any
 
 import gradio as gr
@@ -15,6 +17,14 @@ import deploy_pod
 import one_click
 
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+REPO_DIR = Path(__file__).resolve().parents[1]
+if str(REPO_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_DIR))
+
+from stepaudior1vllm import StepAudioR1  # noqa: E402
+
+MODEL_NAME = "Step-Audio-R1.1"
+_CLIENTS: dict[str, StepAudioR1] = {}
 
 
 def _proxy_urls(pod_id: str, api_port: int = 9999, ui_port: int = 7860) -> tuple[str, str]:
@@ -26,6 +36,46 @@ def _proxy_urls(pod_id: str, api_port: int = 9999, ui_port: int = 7860) -> tuple
 
 def _clean_text(text: str) -> str:
     return THINK_RE.sub("", text or "").strip() or "(No output)"
+
+
+def _content_as_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        return str(content.get("text") or content.get("value") or "")
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("value") or ""))
+        return " ".join([p for p in parts if p]).strip()
+    return str(content or "")
+
+
+def _extract_message(message: str | dict) -> tuple[str, str | None]:
+    if isinstance(message, str):
+        return message.strip(), None
+
+    text = str(message.get("text") or "").strip()
+    files = message.get("files") or []
+    audio_path: str | None = None
+    for file_item in files:
+        if isinstance(file_item, dict):
+            path = file_item.get("path")
+            if path:
+                audio_path = str(path)
+                break
+        elif isinstance(file_item, str):
+            audio_path = file_item
+            break
+    return text, audio_path
+
+
+def _client_for_pod(pod_id: str) -> StepAudioR1:
+    if pod_id not in _CLIENTS:
+        api_url, _ = _proxy_urls(pod_id)
+        _CLIENTS[pod_id] = StepAudioR1(api_url=api_url, model_name=MODEL_NAME)
+    return _CLIENTS[pod_id]
 
 
 def _build_deploy_args(api_key: str, hf_token: str, name: str) -> argparse.Namespace:
@@ -111,38 +161,49 @@ def stop_pod(runpod_api_key: str, pod_name: str) -> str:
 
 
 def chat_with_model(
-    message: str,
+    message: str | dict,
     history: list[dict],
     pod_id: str,
-    model_name: str,
-    temperature: float,
-    max_tokens: int,
 ) -> str:
     if not pod_id.strip():
         return "Set Pod ID first by clicking Start/Reuse Pod."
 
-    api_url, _ = _proxy_urls(pod_id.strip())
-    messages: list[dict[str, str]] = []
+    user_text, audio_path = _extract_message(message)
+    content: list[dict[str, str]] = []
+    if user_text:
+        content.append({"type": "text", "text": user_text})
+    if audio_path:
+        content.append({"type": "audio", "audio": audio_path})
+    if not content:
+        return "Type a message or upload/record audio."
+
+    model_messages: list[dict] = []
     for item in history:
         role = item.get("role")
-        content = item.get("content")
-        if role in {"user", "assistant"} and isinstance(content, str):
-            messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": message})
+        text = _content_as_text(item.get("content")).strip()
+        if not text:
+            continue
+        if role == "user":
+            model_messages.append({"role": "human", "content": [{"type": "text", "text": text}]})
+        elif role == "assistant":
+            model_messages.append({"role": "assistant", "content": text})
 
-    payload = {
-        "model": model_name.strip() or "Step-Audio-R1.1",
-        "messages": messages,
-        "temperature": float(temperature),
-        "max_tokens": int(max_tokens),
-    }
+    model_messages.append({"role": "human", "content": content})
+    model_messages.append({"role": "assistant", "content": "<think>\n", "eot": False})
+
     try:
-        resp = requests.post(api_url, json=payload, timeout=300)
-        if resp.status_code != 200:
-            return f"Request failed ({resp.status_code}): {resp.text[:500]}"
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return _clean_text(content)
+        full_text = ""
+        client = _client_for_pod(pod_id.strip())
+        for _, text, _ in client.stream(
+            model_messages,
+            max_tokens=4096,
+            temperature=0.7,
+            repetition_penalty=1.0,
+            stop_token_ids=[151665],
+        ):
+            if text:
+                full_text += text
+        return _clean_text(full_text)
     except Exception as exc:  # noqa: BLE001
         return f"Request failed: {exc}"
 
@@ -154,7 +215,7 @@ def build_app() -> gr.Blocks:
             # Step-Audio-R1.1 One-Click Launcher
             1) Paste RunPod API key
             2) Click Start/Reuse Pod
-            3) Open hosted UI link or chat in this page
+            3) Chat directly in this page with text + audio
             """
         )
 
@@ -191,14 +252,12 @@ def build_app() -> gr.Blocks:
             outputs=[status_json],
         )
 
-        gr.Markdown("## Local Chat (text)")
+        gr.Markdown("## Chat (text + audio)")
         gr.ChatInterface(
             fn=chat_with_model,
+            multimodal=True,
             additional_inputs=[
                 pod_id_box,
-                gr.Textbox(value="Step-Audio-R1.1", label="Model Name"),
-                gr.Slider(0.1, 1.2, value=0.7, step=0.05, label="Temperature"),
-                gr.Slider(128, 8192, value=1024, step=128, label="Max Tokens"),
             ],
         )
 
