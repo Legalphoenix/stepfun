@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import re
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,11 @@ from stepaudior1vllm import StepAudioR1  # noqa: E402
 
 MODEL_NAME = "Step-Audio-R1.1"
 _CLIENTS: dict[str, StepAudioR1] = {}
+
+try:
+    import edge_tts
+except Exception:  # noqa: BLE001
+    edge_tts = None
 
 
 def _proxy_urls(pod_id: str, api_port: int = 9999, ui_port: int = 7860) -> tuple[str, str]:
@@ -76,6 +84,22 @@ def _client_for_pod(pod_id: str) -> StepAudioR1:
         api_url, _ = _proxy_urls(pod_id)
         _CLIENTS[pod_id] = StepAudioR1(api_url=api_url, model_name=MODEL_NAME)
     return _CLIENTS[pod_id]
+
+
+def _synthesize_reply(text: str) -> str | None:
+    if not text or edge_tts is None:
+        return None
+    output_path = Path(tempfile.gettempdir()) / f"stepaudio_reply_{uuid.uuid4().hex}.mp3"
+
+    async def _run() -> None:
+        communicate = edge_tts.Communicate(text=text, voice="en-US-AvaNeural")
+        await communicate.save(str(output_path))
+
+    try:
+        asyncio.run(_run())
+        return str(output_path)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _build_deploy_args(api_key: str, hf_token: str, name: str) -> argparse.Namespace:
@@ -164,9 +188,9 @@ def chat_with_model(
     message: str | dict,
     history: list[dict],
     pod_id: str,
-) -> str:
+) -> tuple[str, str | None]:
     if not pod_id.strip():
-        return "Set Pod ID first by clicking Start/Reuse Pod."
+        return "Set Pod ID first by clicking Start/Reuse Pod.", None
 
     user_text, audio_path = _extract_message(message)
     content: list[dict[str, str]] = []
@@ -175,7 +199,7 @@ def chat_with_model(
     if audio_path:
         content.append({"type": "audio", "audio": audio_path})
     if not content:
-        return "Type a message or upload/record audio."
+        return "Type a message or upload/record audio.", None
 
     model_messages: list[dict] = []
     for item in history:
@@ -203,9 +227,11 @@ def chat_with_model(
         ):
             if text:
                 full_text += text
-        return _clean_text(full_text)
+        reply_text = _clean_text(full_text)
+        reply_audio = _synthesize_reply(reply_text)
+        return reply_text, reply_audio
     except Exception as exc:  # noqa: BLE001
-        return f"Request failed: {exc}"
+        return f"Request failed: {exc}", None
 
 
 def build_app() -> gr.Blocks:
@@ -235,6 +261,13 @@ def build_app() -> gr.Blocks:
         status_json = gr.Code(label="Status", language="json")
         pod_id_box = gr.Textbox(label="Pod ID")
         hosted_ui_link = gr.Textbox(label="Hosted UI URL")
+        spoken_reply = gr.Audio(
+            label="Spoken Reply",
+            type="filepath",
+            autoplay=True,
+            interactive=False,
+            format="mp3",
+        )
 
         start_btn.click(
             fn=start_pod,
@@ -265,6 +298,7 @@ def build_app() -> gr.Blocks:
             additional_inputs=[
                 pod_id_box,
             ],
+            additional_outputs=[spoken_reply],
         )
 
     return app
