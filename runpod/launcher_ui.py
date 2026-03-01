@@ -252,10 +252,16 @@ def build_app() -> gr.Blocks:
             outputs=[status_json],
         )
 
-        gr.Markdown("## Chat (text + audio)")
+        gr.Markdown("## Chat (text + audio)\nUse the mic/upload controls in the input box to attach audio.")
         gr.ChatInterface(
             fn=chat_with_model,
             multimodal=True,
+            textbox=gr.MultimodalTextbox(
+                sources=["upload", "microphone"],
+                file_types=["audio"],
+                file_count="single",
+                placeholder="Type your prompt and/or attach audio...",
+            ),
             additional_inputs=[
                 pod_id_box,
             ],
