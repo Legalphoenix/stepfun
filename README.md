@@ -30,7 +30,17 @@ WeChat Developer Group
 
 If you want the easiest setup, use a **RunPod GPU Pod** (not Serverless) and automate creation via API.
 
-### 1) One-command deploy via RunPod API
+### 1) One-click run (recommended)
+
+```bash
+export RUNPOD_API_KEY="YOUR_RUNPOD_KEY"
+export HF_TOKEN="YOUR_HF_TOKEN_OPTIONAL"
+python runpod/one_click.py
+```
+
+This will reuse an existing `step-audio-r1-1` Pod if it exists, or create one automatically, then wait until API is live.
+
+### 2) One-command deploy via RunPod API (advanced)
 
 This script creates a Pod, pulls this repo on the Pod, downloads `stepfun-ai/Step-Audio-R1.1`, and starts vLLM automatically.
 
@@ -51,7 +61,7 @@ The script prints:
 - OpenAI-compatible API URL (`/v1/chat/completions`)
 - SSH command
 
-### 2) Optional custom hardware settings
+### 3) Optional custom hardware settings
 
 ```bash
 python runpod/deploy_pod.py \
@@ -61,9 +71,16 @@ python runpod/deploy_pod.py \
   --tensor-parallel-size 1
 ```
 
-### 3) Use the API from your machine
+### 4) Use the API from your machine
 
 Once the Pod is ready, set `api_url` in `examples-vllm_r1.py` to the URL printed by deploy script.
+
+### 5) Stop the Pod when you are done (cost control)
+
+```bash
+export RUNPOD_API_KEY="YOUR_RUNPOD_KEY"
+python runpod/stop_pod.py
+```
 
 ## Overview of R1.1
 
