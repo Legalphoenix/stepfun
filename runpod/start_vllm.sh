@@ -11,6 +11,7 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-16384}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-32}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}"
+UI_PORT="${UI_PORT:-7860}"
 
 if [[ ! -d "${REPO_DIR}/.git" ]]; then
   git clone https://github.com/Legalphoenix/stepfun.git "${REPO_DIR}"
@@ -18,12 +19,12 @@ else
   git -C "${REPO_DIR}" pull --ff-only
 fi
 
-python -m pip install --no-cache-dir -U huggingface_hub
+python -m pip install --no-cache-dir -U huggingface_hub gradio requests pydub
 
 export MODEL_ID MODEL_DIR
 python -u "${REPO_DIR}/runpod/download_model.py"
 
-exec vllm serve "${MODEL_DIR}" \
+vllm serve "${MODEL_DIR}" \
   --served-model-name "${SERVED_MODEL_NAME}" \
   --host "${API_HOST}" \
   --port "${API_PORT}" \
@@ -34,4 +35,24 @@ exec vllm serve "${MODEL_DIR}" \
   --chat-template "${REPO_DIR}/runpod/chat_template.jinja" \
   --enable-log-requests \
   --interleave-mm-strings \
-  --trust-remote-code
+  --trust-remote-code &
+
+VLLM_PID=$!
+
+cleanup() {
+  kill "${VLLM_PID}" >/dev/null 2>&1 || true
+  kill "${UI_PID:-0}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+export OPENAI_API_URL="http://127.0.0.1:${API_PORT}/v1/chat/completions"
+export UI_PORT
+export SERVED_MODEL_NAME
+
+python -u "${REPO_DIR}/runpod/gradio_app.py" &
+UI_PID=$!
+
+wait -n "${VLLM_PID}" "${UI_PID}"
+EXIT_CODE=$?
+cleanup
+exit "${EXIT_CODE}"

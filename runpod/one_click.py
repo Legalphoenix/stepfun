@@ -29,8 +29,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hf-token", default=os.getenv("HF_TOKEN"), help="Optional Hugging Face token.")
     parser.add_argument("--name", default="step-audio-r1-1", help="Pod name to reuse/create.")
     parser.add_argument("--api-port", type=int, default=9999)
+    parser.add_argument("--ui-port", type=int, default=7860)
     parser.add_argument("--timeout-seconds", type=int, default=10800)
     parser.add_argument("--poll-seconds", type=int, default=20)
+    parser.add_argument("--wait-for-model", action="store_true", help="Wait for model API readiness, not only UI.")
     parser.add_argument("--no-wait", action="store_true", help="Return immediately after create/start.")
     return parser.parse_args()
 
@@ -77,28 +79,43 @@ def start_pod_if_needed(api_key: str, pod: dict[str, Any]) -> dict[str, Any]:
     return api_request(api_key, "GET", f"/pods/{pod_id}")
 
 
-def wait_for_api_ready(
+def wait_for_ready(
     api_key: str,
     pod_id: str,
     api_port: int,
+    ui_port: int,
+    wait_for_model: bool,
     timeout_seconds: int,
     poll_seconds: int,
-) -> str:
+) -> tuple[str, str, bool]:
     deadline = time.time() + timeout_seconds
-    proxy_url = f"https://{pod_id}-{api_port}.proxy.runpod.net/v1/models"
+    api_models_url = f"https://{pod_id}-{api_port}.proxy.runpod.net/v1/models"
+    api_url = f"https://{pod_id}-{api_port}.proxy.runpod.net/v1/chat/completions"
+    ui_url = f"https://{pod_id}-{ui_port}.proxy.runpod.net"
+    ui_ready = False
+    model_ready = False
     while time.time() < deadline:
         pod = api_request(api_key, "GET", f"/pods/{pod_id}")
         if pod.get("desiredStatus") in {"TERMINATED"}:
             raise RuntimeError(f"Pod {pod_id} terminated unexpectedly.")
         try:
-            resp = requests.get(proxy_url, timeout=30)
-            if resp.status_code == 200:
-                return f"https://{pod_id}-{api_port}.proxy.runpod.net/v1/chat/completions"
+            ui_resp = requests.get(ui_url, timeout=30, allow_redirects=True)
+            if ui_resp.status_code in {200, 302, 307}:
+                ui_ready = True
         except requests.RequestException:
             pass
+        try:
+            api_resp = requests.get(api_models_url, timeout=30)
+            if api_resp.status_code == 200:
+                model_ready = True
+        except requests.RequestException:
+            pass
+
+        if ui_ready and (model_ready or not wait_for_model):
+            return api_url, ui_url, model_ready
         time.sleep(poll_seconds)
     raise TimeoutError(
-        "Timed out waiting for model readiness. Pod may still be downloading weights; re-run the same command."
+        "Timed out waiting for readiness. Pod may still be downloading weights; re-run the same command."
     )
 
 
@@ -117,6 +134,7 @@ def build_deploy_args(args: argparse.Namespace) -> argparse.Namespace:
         model_dir="/workspace/Step-Audio-R1.1",
         served_model_name="Step-Audio-R1.1",
         api_port=args.api_port,
+        ui_port=args.ui_port,
         max_model_len=16384,
         max_num_seqs=32,
         tensor_parallel_size=1,
@@ -141,6 +159,7 @@ def main() -> None:
     pod = start_pod_if_needed(args.api_key, pod)
     pod_id = pod["id"]
     proxy_base = f"https://{pod_id}-{args.api_port}.proxy.runpod.net"
+    ui_base = f"https://{pod_id}-{args.ui_port}.proxy.runpod.net"
 
     if args.no_wait:
         print(
@@ -151,16 +170,19 @@ def main() -> None:
                     "status": pod.get("desiredStatus"),
                     "proxy_base_url": proxy_base,
                     "api_url": f"{proxy_base}/v1/chat/completions",
+                    "ui_url": ui_base,
                 },
                 indent=2,
             )
         )
         return
 
-    api_url = wait_for_api_ready(
+    api_url, ui_url, model_ready = wait_for_ready(
         api_key=args.api_key,
         pod_id=pod_id,
         api_port=args.api_port,
+        ui_port=args.ui_port,
+        wait_for_model=args.wait_for_model,
         timeout_seconds=args.timeout_seconds,
         poll_seconds=args.poll_seconds,
     )
@@ -170,6 +192,11 @@ def main() -> None:
                 "pod_id": pod_id,
                 "name": args.name,
                 "api_url": api_url,
+                "ui_url": ui_url,
+                "model_ready": model_ready,
+                "note": (
+                    "Open ui_url in browser. If model_ready is false, the UI is up but model is still warming up."
+                ),
                 "test_command": (
                     "curl -s "
                     + api_url

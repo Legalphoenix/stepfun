@@ -30,6 +30,20 @@ WeChat Developer Group
 
 If you want the easiest setup, use a **RunPod GPU Pod** (not Serverless) and automate creation via API.
 
+### 0) No-terminal launcher (paste API key in UI)
+
+Double-click this file in Finder:
+
+```bash
+runpod/launcher.command
+```
+
+It opens a local browser UI where you:
+- paste `RUNPOD_API_KEY`
+- click **Start / Reuse Pod**
+- get a hosted chat URL and Pod status
+- optionally chat directly from the same local page
+
 ### 1) One-click run (recommended)
 
 ```bash
@@ -38,7 +52,11 @@ export HF_TOKEN="YOUR_HF_TOKEN_OPTIONAL"
 python runpod/one_click.py
 ```
 
-This will reuse an existing `step-audio-r1-1` Pod if it exists, or create one automatically, then wait until API is live.
+This will reuse an existing `step-audio-r1-1` Pod if it exists, or create one automatically, then wait until UI is live.
+It prints:
+- `ui_url` (open in browser to chat)
+- `api_url` (OpenAI-compatible endpoint)
+- `model_ready` (whether the model backend is fully loaded yet)
 
 ### 2) One-command deploy via RunPod API (advanced)
 

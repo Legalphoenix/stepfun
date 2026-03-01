@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-dir", default="/workspace/Step-Audio-R1.1")
     parser.add_argument("--served-model-name", default="Step-Audio-R1.1")
     parser.add_argument("--api-port", type=int, default=9999)
+    parser.add_argument("--ui-port", type=int, default=7860)
     parser.add_argument("--max-model-len", type=int, default=16384)
     parser.add_argument("--max-num-seqs", type=int, default=32)
     parser.add_argument("--tensor-parallel-size", type=int, default=None)
@@ -89,6 +90,7 @@ def create_pod(api_key: str, args: argparse.Namespace) -> dict[str, Any]:
         "SERVED_MODEL_NAME": args.served_model_name,
         "API_HOST": "0.0.0.0",
         "API_PORT": str(args.api_port),
+        "UI_PORT": str(args.ui_port),
         "MAX_MODEL_LEN": str(args.max_model_len),
         "MAX_NUM_SEQS": str(args.max_num_seqs),
         "TENSOR_PARALLEL_SIZE": str(tensor_parallel_size),
@@ -96,6 +98,10 @@ def create_pod(api_key: str, args: argparse.Namespace) -> dict[str, Any]:
     }
     if args.hf_token:
         env["HF_TOKEN"] = args.hf_token
+
+    ports = [f"{args.api_port}/http", "22/tcp"]
+    if args.ui_port != args.api_port:
+        ports.insert(1, f"{args.ui_port}/http")
 
     payload = {
         "name": args.name,
@@ -107,7 +113,7 @@ def create_pod(api_key: str, args: argparse.Namespace) -> dict[str, Any]:
         "imageName": "stepfun2025/vllm:step-audio-2-v20250909",
         "volumeInGb": args.volume_gb,
         "containerDiskInGb": args.container_disk_gb,
-        "ports": [f"{args.api_port}/http", "22/tcp"],
+        "ports": ports,
         "supportPublicIp": True,
         "interruptible": args.interruptible,
         "dockerStartCmd": ["bash", "-lc", build_start_command()],
@@ -137,21 +143,26 @@ def wait_for_network_ready(
     raise TimeoutError("Timed out waiting for Pod networking to become ready.")
 
 
-def summarize(pod: dict[str, Any], api_port: int) -> dict[str, Any]:
+def summarize(pod: dict[str, Any], api_port: int, ui_port: int) -> dict[str, Any]:
     port_mappings = {str(k): v for k, v in (pod.get("portMappings") or {}).items()}
     public_ip = pod.get("publicIp")
     mapped_api_port = port_mappings.get(str(api_port))
+    mapped_ui_port = port_mappings.get(str(ui_port))
     mapped_ssh_port = port_mappings.get("22")
+    pod_id = pod.get("id")
 
     api_url = None
+    ui_url = None
     ssh_command = None
     if public_ip and mapped_api_port:
         api_url = f"http://{public_ip}:{mapped_api_port}/v1/chat/completions"
+    if public_ip and mapped_ui_port:
+        ui_url = f"http://{public_ip}:{mapped_ui_port}"
     if public_ip and mapped_ssh_port:
         ssh_command = f"ssh root@{public_ip} -p {mapped_ssh_port}"
 
     return {
-        "pod_id": pod.get("id"),
+        "pod_id": pod_id,
         "name": pod.get("name"),
         "desired_status": pod.get("desiredStatus"),
         "last_status_change": pod.get("lastStatusChange"),
@@ -160,6 +171,11 @@ def summarize(pod: dict[str, Any], api_port: int) -> dict[str, Any]:
         "public_ip": public_ip,
         "port_mappings": port_mappings,
         "api_url": api_url,
+        "ui_url": ui_url,
+        "api_proxy_url": (
+            f"https://{pod_id}-{api_port}.proxy.runpod.net/v1/chat/completions" if pod_id else None
+        ),
+        "ui_proxy_url": f"https://{pod_id}-{ui_port}.proxy.runpod.net" if pod_id else None,
         "ssh_command": ssh_command,
     }
 
@@ -171,7 +187,7 @@ def main() -> None:
 
     pod = create_pod(args.api_key, args)
     if args.no_wait:
-        print(json.dumps(summarize(pod, args.api_port), indent=2))
+        print(json.dumps(summarize(pod, args.api_port, args.ui_port), indent=2))
         return
 
     try:
@@ -182,10 +198,10 @@ def main() -> None:
             timeout_seconds=args.timeout_seconds,
             poll_seconds=args.poll_seconds,
         )
-        print(json.dumps(summarize(pod, args.api_port), indent=2))
+        print(json.dumps(summarize(pod, args.api_port, args.ui_port), indent=2))
     except TimeoutError:
         current = api_request(args.api_key, "GET", f"/pods/{pod['id']}")
-        summary = summarize(current, args.api_port)
+        summary = summarize(current, args.api_port, args.ui_port)
         summary["warning"] = (
             "Pod created but networking is not ready yet. Check again in RunPod UI or rerun "
             "this script with --no-wait to get IDs instantly."
