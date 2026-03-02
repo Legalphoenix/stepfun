@@ -49,7 +49,7 @@ ensure_repo "https://github.com/stepfun-ai/Step-Audio2.git" "${STEP_AUDIO2_REPO_
 
 python3 -m pip install --no-cache-dir \
   "huggingface_hub<1.0" \
-  gradio \
+  "gradio<6" \
   requests \
   pydub \
   onnxruntime \
