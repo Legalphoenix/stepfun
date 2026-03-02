@@ -21,6 +21,11 @@ import requests
 import deploy_pod
 
 API_BASE = "https://rest.runpod.io/v1"
+REQUIRED_RUNTIME_ENV = {
+    "MAX_MODEL_LEN": "4096",
+    "MAX_NUM_SEQS": "4",
+    "GPU_MEMORY_UTILIZATION": "0.97",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -73,6 +78,13 @@ def find_latest_named_pod(api_key: str, name: str) -> dict[str, Any] | None:
 
 def start_pod_if_needed(api_key: str, pod: dict[str, Any]) -> dict[str, Any]:
     pod_id = pod["id"]
+    env = dict(pod.get("env") or {})
+    if any(str(env.get(key)) != value for key, value in REQUIRED_RUNTIME_ENV.items()):
+        updated_env = dict(env)
+        updated_env.update(REQUIRED_RUNTIME_ENV)
+        api_request(api_key, "PATCH", f"/pods/{pod_id}", payload={"env": updated_env})
+        pod = api_request(api_key, "GET", f"/pods/{pod_id}")
+
     desired_status = pod.get("desiredStatus")
     if desired_status == "EXITED":
         api_request(api_key, "POST", f"/pods/{pod_id}/start")
