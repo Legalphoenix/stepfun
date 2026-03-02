@@ -47,8 +47,8 @@ ensure_repo() {
 ensure_repo "https://github.com/Legalphoenix/stepfun.git" "${REPO_DIR}"
 ensure_repo "https://github.com/stepfun-ai/Step-Audio2.git" "${STEP_AUDIO2_REPO_DIR}" "depth1"
 
-python3 -m pip install --no-cache-dir -U \
-  huggingface_hub \
+python3 -m pip install --no-cache-dir \
+  "huggingface_hub<1.0" \
   gradio \
   requests \
   pydub \
