@@ -4,7 +4,14 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
 from huggingface_hub import snapshot_download
+
+
+def _has_weights(model_dir: str) -> bool:
+    root = Path(model_dir)
+    return bool(list(root.glob("*.safetensors")) or list(root.glob("*.bin")))
 
 
 def main() -> None:
@@ -14,9 +21,11 @@ def main() -> None:
 
     os.makedirs(model_dir, exist_ok=True)
 
-    if os.path.exists(os.path.join(model_dir, "config.json")):
+    if os.path.exists(os.path.join(model_dir, "config.json")) and _has_weights(model_dir):
         print(f"Model already present at {model_dir}; skipping download.")
         return
+    if os.path.exists(os.path.join(model_dir, "config.json")) and not _has_weights(model_dir):
+        print(f"Model directory {model_dir} is missing weight shards; resuming download.")
 
     print(f"Downloading {model_id} into {model_dir} ...")
     snapshot_download(
