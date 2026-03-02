@@ -2,3 +2,7 @@ requests>=2.32.0
 huggingface_hub>=0.30.0
 gradio>=4.44.0
 pydub>=0.25.1
+onnxruntime>=1.20.0
+s3tokenizer>=0.1.7
+hyperpyyaml>=1.2.2
+soundfile>=0.12.1

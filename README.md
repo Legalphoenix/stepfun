@@ -42,8 +42,8 @@ It opens a local browser UI where you:
 - paste `RUNPOD_API_KEY`
 - click **Start / Reuse Pod**
 - get a hosted chat URL and Pod status
-- chat directly from the same local page with text + audio input
-- hear spoken replies (TTS playback of model response text)
+- open/use embedded hosted voice chat immediately
+- speak with mic/upload audio and hear model-native decoded voice replies
 
 ### 1) One-click run (recommended)
 

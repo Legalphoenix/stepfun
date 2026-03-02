@@ -196,12 +196,31 @@ class StepAudioR1:
 
                     # print(choice_data)
 
-                    # Extract text and audio
-                    text = line_content.get('tts_content', {}).get('tts_text', None)
-                    text = text if text is not None else line_content.get('content', '')
+                    # Extract text and audio tokens.
+                    # For some backend configs, audio tokens can arrive either in
+                    # tts_content.tts_audio or directly in content.
+                    tts_content = line_content.get("tts_content", {}) or {}
+                    text = tts_content.get("tts_text", None)
+                    raw_audio = tts_content.get("tts_audio", None)
+                    audio = None
 
-                    audio = line_content.get('tts_content', {}).get('tts_audio', None)
-                    audio = [int(i) for i in StepAudioR1.audio_token_re.findall(audio)] if audio else None
+                    if isinstance(raw_audio, list):
+                        audio = [int(i) for i in raw_audio]
+                    elif isinstance(raw_audio, str) and raw_audio:
+                        audio = [int(i) for i in StepAudioR1.audio_token_re.findall(raw_audio)]
+                    else:
+                        content = line_content.get("content", "")
+                        if isinstance(content, str):
+                            content_audio = [int(i) for i in StepAudioR1.audio_token_re.findall(content)]
+                            if content_audio:
+                                audio = content_audio
+                                content = StepAudioR1.audio_token_re.sub("", content)
+                                content = content.replace("<tts_start>", "").replace("<tts_end>", "")
+                                if text is None:
+                                    text = content
+
+                    if text is None:
+                        text = line_content.get("content", "")
 
                     yield line_content, text, audio
 

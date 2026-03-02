@@ -72,11 +72,22 @@ def build_start_command() -> str:
     return (
         "set -euo pipefail; "
         "REPO_DIR=/workspace/stepfun; "
-        "if [ ! -d \"$REPO_DIR/.git\" ]; then "
-        "git clone https://github.com/Legalphoenix/stepfun.git \"$REPO_DIR\"; "
-        "else git -C \"$REPO_DIR\" pull --ff-only; fi; "
+        "START_LOG=/workspace/runpod_start.log; "
+        "mkdir -p /workspace; "
+        "{ "
+        "if [ -d \"$REPO_DIR/.git\" ]; then "
+        "git -C \"$REPO_DIR\" pull --ff-only || echo 'WARN: git pull failed; continuing with existing checkout.'; "
+        "elif [ -d \"$REPO_DIR\" ] && [ \"$(ls -A \"$REPO_DIR\" 2>/dev/null)\" ]; then "
+        "echo 'Using existing non-git directory at /workspace/stepfun'; "
+        "else git clone https://github.com/Legalphoenix/stepfun.git \"$REPO_DIR\"; fi; "
         "chmod +x \"$REPO_DIR/runpod/start_vllm.sh\"; "
-        "exec \"$REPO_DIR/runpod/start_vllm.sh\""
+        "\"$REPO_DIR/runpod/start_vllm.sh\"; "
+        "} >>\"$START_LOG\" 2>&1 || { "
+        "code=$?; "
+        "echo \"Startup failed with exit code $code. Inspect $START_LOG\" >>\"$START_LOG\"; "
+        "tail -n 200 \"$START_LOG\"; "
+        "sleep infinity; "
+        "}"
     )
 
 
