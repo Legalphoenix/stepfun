@@ -127,6 +127,7 @@ class AudioService:
 
 class StepAudioR1:
     audio_token_re = re.compile(r"<audio_(\d+)>")
+    role_aliases = {"human": "user"}
 
     def __init__(self, api_url, model_name, chat_template=None):
         self.api_url = api_url
@@ -137,6 +138,10 @@ class StepAudioR1:
 
     def __call__(self, messages, **kwargs):
         return next(self.stream(messages, **kwargs, stream=False))
+
+    @classmethod
+    def normalize_role(cls, role: str) -> str:
+        return cls.role_aliases.get(role, role)
 
     def log_request(self, payload):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -158,14 +163,16 @@ class StepAudioR1:
         if stop is None:
             stop = ["<|EOT|>"]
 
-        if (
-            payload["messages"][-1].get("role", None) == "assistant"
-            and payload["messages"][-1].get("content", None) is None
-        ):
+        last_message = messages[-1] if messages else {}
+        last_role = self.normalize_role(last_message.get("role", ""))
+        last_content = last_message.get("content", None)
+        last_eot = last_message.get("eot", True)
+
+        if last_role == "assistant" and last_content is None:
             payload["messages"].pop(-1)
             payload["continue_final_message"] = False
             payload["add_generation_prompt"] = True
-        elif payload["messages"][-1].get("eot", True):
+        elif last_eot:
             payload["continue_final_message"] = False
             payload["add_generation_prompt"] = True
         else:
@@ -175,7 +182,14 @@ class StepAudioR1:
         self.log_request(payload)
         
         with requests.post(self.api_url, headers=headers, json=payload, stream=stream) as response:
-            response.raise_for_status()
+            if not response.ok:
+                detail = response.text.strip()
+                if len(detail) > 2000:
+                    detail = f"{detail[:2000]}... [truncated]"
+                raise requests.HTTPError(
+                    f"{response.status_code} {response.reason}: {detail or '<empty response body>'}",
+                    response=response,
+                )
 
             for line in response.iter_lines():
                 if line == b'':
@@ -235,10 +249,16 @@ class StepAudioR1:
         if item["type"] != "audio":
             return [item]
 
-        chunks = AudioService.read_audio_file(item["audio"], max_duration=25.0)
+        audio_path = item.get("audio")
+        if not audio_path:
+            raise ValueError("Audio input is missing a file path.")
+
+        chunks = AudioService.read_audio_file(audio_path, max_duration=25.0)
         if not chunks:
-            logger.error(f"Failed to process audio item: {item['audio']}")
-            return [item]
+            raise ValueError(
+                f"Unable to decode audio file '{audio_path}'. "
+                "Please record again or upload a WAV/MP3 file."
+            )
 
         encoded_chunks = AudioService.encode_audio_to_base64(chunks)
         
@@ -250,9 +270,14 @@ class StepAudioR1:
     def apply_chat_template(self, messages):
         output_messages = []
         for message in messages:
-            if message["role"] == "human" and isinstance(message["content"], list):
-                processed = [j for i in message["content"] for j in self.process_content_item(i)]
-                output_messages.append({"role": message["role"], "content": processed})
-            else:
-                output_messages.append(message)
+            normalized = dict(message)
+            normalized["role"] = self.normalize_role(normalized.get("role", ""))
+
+            if normalized["role"] == "user" and isinstance(normalized.get("content"), list):
+                processed = [j for i in normalized["content"] for j in self.process_content_item(i)]
+                normalized["content"] = processed
+
+            # Internal helper keys are not part of OpenAI chat message schema.
+            normalized.pop("eot", None)
+            output_messages.append(normalized)
         return output_messages

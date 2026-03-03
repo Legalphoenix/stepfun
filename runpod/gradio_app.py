@@ -22,6 +22,7 @@ from stepaudior1vllm import StepAudioR1  # noqa: E402
 OPENAI_API_URL = os.getenv("OPENAI_API_URL", "http://127.0.0.1:9999/v1/chat/completions")
 MODEL_NAME = os.getenv("SERVED_MODEL_NAME", "Step-Audio-R1.1")
 UI_PORT = int(os.getenv("UI_PORT", "7860"))
+MAX_RESPONSE_TOKENS = int(os.getenv("MAX_RESPONSE_TOKENS", "768"))
 CACHE_DIR = Path(os.getenv("GRADIO_TEMP_DIR", "/tmp/stepaudio-r1"))
 STEP_AUDIO2_REPO_DIR = os.getenv("STEP_AUDIO2_REPO_DIR", "/workspace/Step-Audio2")
 TOKEN2WAV_DIR = os.getenv("TOKEN2WAV_DIR", "/workspace/Step-Audio-2-mini/token2wav")
@@ -91,7 +92,7 @@ def submit_turn(
         user_content.append({"type": "text", "text": user_text})
         chatbot.append({"role": "user", "content": user_text})
 
-    model_history.append({"role": "human", "content": user_content})
+    model_history.append({"role": "user", "content": user_content})
 
     try:
         request_messages = model_history + [
@@ -100,7 +101,7 @@ def submit_turn(
 
         response, reply_text_raw, reply_audio_tokens = CLIENT(
             request_messages,
-            max_tokens=4096,
+            max_tokens=MAX_RESPONSE_TOKENS,
             temperature=0.7,
             repetition_penalty=1.0,
             stop_token_ids=[151665],
@@ -152,6 +153,7 @@ def build_app() -> gr.Blocks:
                 label="Your Voice",
                 type="filepath",
                 sources=["microphone", "upload"],
+                format="wav",
             )
             text = gr.Textbox(label="Optional Text", placeholder="Add text (optional)", lines=3)
 

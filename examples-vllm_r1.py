@@ -29,7 +29,7 @@ def mmau_test(model):
         question_text += f"{chr(65+i)}. {choice}\n"
     
     messages = [
-        {"role": "human", "content": [
+        {"role": "user", "content": [
             {"type": "text", "text": question_text},
             {"type": "audio", "audio": "assets/mmau_test.wav"}
         ]},
@@ -60,7 +60,7 @@ def mmsu_test(model):
         question_text += f"{chr(65+i)}. {choice}\n"
     
     messages = [
-        {"role": "human", "content": [
+        {"role": "user", "content": [
             {"type": "text", "text": question_text},
             {"type": "audio", "audio": "assets/mmsu_test.wav"}
         ]},
@@ -90,7 +90,7 @@ def spoken_mqa_test(model):
     
     # 与 spokenmqa_inferencer.py 格式一致：先文本，后音频
     messages = [
-        {"role": "human", "content": [
+        {"role": "user", "content": [
             {"type": "text", "text": question},
             {"type": "audio", "audio": "assets/spoken_mqa_test.wav"}
         ]},
@@ -116,7 +116,7 @@ def big_bench_audio_test(model):
     
     # 与 big_bench_inferencer.py 格式一致：先音频，后文本
     messages = [
-        {"role": "human", "content": [
+        {"role": "user", "content": [
             {"type": "audio", "audio": "assets/big_bench_audio_test.wav"},
             {"type": "text", "text": instruction}
         ]},
@@ -151,7 +151,7 @@ def mmar_test(model):
         question_text += f"{chr(65+i)}. {choice}\n"
     
     messages = [
-        {"role": "human", "content": [
+        {"role": "user", "content": [
             {"type": "text", "text": question_text},
             {"type": "audio", "audio": "assets/mmar_test.wav"}
         ]},
@@ -178,7 +178,7 @@ def mmar_test(model):
 def wild_speech_test(model):
     """Test automatic speech recognition in challenging acoustic conditions."""
     messages = [
-        {"role": "human", "content": [
+        {"role": "user", "content": [
             {"type": "audio", "audio": "assets/wild_speech_test.wav"}
         ]},
         {"role": "assistant", "content": "<think>\n", "eot": False},
@@ -205,7 +205,7 @@ def uac_test(model):
     """Test universal audio caption generation with detailed analysis."""
     messages = [
         {"role": "system", "content": "你是一位经验丰富的音频分析专家，擅长对各种语音音频进行深入细致的分析。你的任务不仅仅是将音频内容准确转写为文字，还要对说话人的声音特征（如性别、年龄、情绪状态）、背景声音、环境信息以及可能涉及的事件进行全面描述。请以专业、客观的视角，详细、准确地完成每一次分析和转写。"},
-        {"role": "human", "content": [{"type": "audio", "audio": "assets/music_playing_followed_by_a_woman_speaking.wav"}]},
+        {"role": "user", "content": [{"type": "audio", "audio": "assets/music_playing_followed_by_a_woman_speaking.wav"}]},
         {"role": "assistant", "content": "<think>\n", "eot": False},
     ]
     full_text = ""
@@ -228,7 +228,7 @@ def song_appreciation(model):
     """Test song appreciation and music analysis capabilities."""
     messages = [
         {"role": "system", "content": "你是一个语音助手，你有非常丰富的音频处理经验。"},
-        {"role": "human", "content": [
+        {"role": "user", "content": [
             {"type": "text", "text": "鉴赏一下这段歌声。"},
             {"type": "audio", "audio": "assets/song.wav"},
         ]},
@@ -254,7 +254,7 @@ def Speaker_Trait_Inference(model):
     """Test speaker trait inference from voice characteristics."""
     messages = [
         {"role": "system", "content": "你是一个语音助手，你有非常丰富的音频处理经验。"},
-        {"role": "human", "content": [
+        {"role": "user", "content": [
             {"type": "text", "text": "说话人的语气和音色如何反映他的性格和情绪特征？"},
             {"type": "audio", "audio": "assets/Speaker_Trait_Inference.wav"},
         ]},

@@ -33,6 +33,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-key", default=os.getenv("RUNPOD_API_KEY"), help="RunPod API key.")
     parser.add_argument("--hf-token", default=os.getenv("HF_TOKEN"), help="Optional Hugging Face token.")
     parser.add_argument("--name", default="step-audio-r1-1", help="Pod name to reuse/create.")
+    parser.add_argument(
+        "--network-volume-id",
+        default=os.getenv("RUNPOD_NETWORK_VOLUME_ID"),
+        help="Attach an existing RunPod network volume by ID.",
+    )
+    parser.add_argument(
+        "--data-center-id",
+        dest="data_center_ids",
+        action="append",
+        help="Preferred data center ID (can be passed multiple times).",
+    )
     parser.add_argument("--api-port", type=int, default=9999)
     parser.add_argument("--ui-port", type=int, default=7860)
     parser.add_argument("--timeout-seconds", type=int, default=10800)
@@ -152,6 +163,8 @@ def build_deploy_args(args: argparse.Namespace) -> argparse.Namespace:
         tensor_parallel_size=1,
         gpu_memory_utilization=0.97,
         hf_token=args.hf_token,
+        network_volume_id=args.network_volume_id,
+        data_center_ids=args.data_center_ids,
         no_wait=True,
         timeout_seconds=args.timeout_seconds,
         poll_seconds=args.poll_seconds,
@@ -165,6 +178,14 @@ def main() -> None:
         raise SystemExit("Missing RUNPOD_API_KEY. Set it and re-run.")
 
     pod = find_latest_named_pod(args.api_key, args.name)
+    if pod is not None:
+        pod = api_request(args.api_key, "GET", f"/pods/{pod['id']}")
+        expected_code_rev = deploy_pod.current_launcher_code_rev()
+        current_code_rev = str((pod.get("env") or {}).get("LAUNCHER_CODE_REV") or "")
+        if current_code_rev != expected_code_rev:
+            api_request(args.api_key, "DELETE", f"/pods/{pod['id']}")
+            pod = None
+
     if pod is None:
         pod = deploy_pod.create_pod(args.api_key, build_deploy_args(args))
 

@@ -4,14 +4,25 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import requests
 
 API_BASE = "https://rest.runpod.io/v1"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+OVERLAY_RELATIVE_FILES = [
+    "runpod/gradio_app.py",
+    "runpod/native_audio.py",
+    "runpod/chat_template.jinja",
+    "runpod/start_vllm.sh",
+    "stepaudior1vllm.py",
+]
 
 DEFAULT_GPU_TYPES = [
     "NVIDIA H200",
@@ -20,6 +31,23 @@ DEFAULT_GPU_TYPES = [
     "NVIDIA A100-SXM4-80GB",
     "NVIDIA A100 80GB PCIe",
 ]
+
+
+def _overlay_sources() -> dict[str, str]:
+    overlay: dict[str, str] = {}
+    for rel_path in OVERLAY_RELATIVE_FILES:
+        abs_path = REPO_ROOT / rel_path
+        overlay[rel_path] = base64.b64encode(abs_path.read_bytes()).decode("ascii")
+    return overlay
+
+
+def current_launcher_code_rev() -> str:
+    sha = hashlib.sha256()
+    for rel_path in OVERLAY_RELATIVE_FILES:
+        abs_path = REPO_ROOT / rel_path
+        sha.update(rel_path.encode("utf-8"))
+        sha.update(abs_path.read_bytes())
+    return sha.hexdigest()[:12]
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +75,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tensor-parallel-size", type=int, default=None)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.97)
     parser.add_argument("--hf-token", default=os.getenv("HF_TOKEN"), help="Optional Hugging Face token.")
+    parser.add_argument(
+        "--network-volume-id",
+        default=os.getenv("RUNPOD_NETWORK_VOLUME_ID"),
+        help="Attach an existing RunPod network volume by ID.",
+    )
+    parser.add_argument(
+        "--data-center-id",
+        dest="data_center_ids",
+        action="append",
+        help="Preferred data center ID (can be passed multiple times).",
+    )
     parser.add_argument("--no-wait", action="store_true", help="Return immediately after Pod creation.")
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     parser.add_argument("--poll-seconds", type=int, default=10)
@@ -69,6 +108,9 @@ def api_request(api_key: str, method: str, path: str, payload: dict[str, Any] | 
 
 
 def build_start_command() -> str:
+    overlay_blob_b64 = base64.b64encode(
+        json.dumps(_overlay_sources(), separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).decode("ascii")
     return (
         "set -euo pipefail; "
         "REPO_DIR=/workspace/stepfun; "
@@ -80,6 +122,18 @@ def build_start_command() -> str:
         "elif [ -d \"$REPO_DIR\" ] && [ \"$(ls -A \"$REPO_DIR\" 2>/dev/null)\" ]; then "
         "echo 'Using existing non-git directory at /workspace/stepfun'; "
         "else git clone https://github.com/Legalphoenix/stepfun.git \"$REPO_DIR\"; fi; "
+        "python3 - <<'PY'\n"
+        "import base64\n"
+        "import json\n"
+        "from pathlib import Path\n"
+        f"overlay = json.loads(base64.b64decode('{overlay_blob_b64}').decode('utf-8'))\n"
+        "repo_dir = Path('/workspace/stepfun')\n"
+        "for rel_path, file_b64 in overlay.items():\n"
+        "    target = repo_dir / rel_path\n"
+        "    target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    target.write_bytes(base64.b64decode(file_b64))\n"
+        "print(f'Applied launcher overlay to {len(overlay)} file(s).')\n"
+        "PY\n"
         "chmod +x \"$REPO_DIR/runpod/start_vllm.sh\"; "
         "\"$REPO_DIR/runpod/start_vllm.sh\"; "
         "} >>\"$START_LOG\" 2>&1 || { "
@@ -94,6 +148,11 @@ def build_start_command() -> str:
 def create_pod(api_key: str, args: argparse.Namespace) -> dict[str, Any]:
     tensor_parallel_size = args.tensor_parallel_size or args.gpu_count
     gpu_types = args.gpu_types or DEFAULT_GPU_TYPES
+    data_center_ids = [dc.strip() for dc in (args.data_center_ids or []) if dc and dc.strip()]
+    if not data_center_ids:
+        env_data_centers = os.getenv("RUNPOD_DATA_CENTER_IDS", "")
+        if env_data_centers:
+            data_center_ids = [dc.strip() for dc in env_data_centers.split(",") if dc.strip()]
 
     env = {
         "MODEL_ID": args.model_id,
@@ -106,6 +165,7 @@ def create_pod(api_key: str, args: argparse.Namespace) -> dict[str, Any]:
         "MAX_NUM_SEQS": str(args.max_num_seqs),
         "TENSOR_PARALLEL_SIZE": str(tensor_parallel_size),
         "GPU_MEMORY_UTILIZATION": str(args.gpu_memory_utilization),
+        "LAUNCHER_CODE_REV": current_launcher_code_rev(),
     }
     if args.hf_token:
         env["HF_TOKEN"] = args.hf_token
@@ -122,7 +182,6 @@ def create_pod(api_key: str, args: argparse.Namespace) -> dict[str, Any]:
         "gpuTypeIds": gpu_types,
         "gpuTypePriority": "availability",
         "imageName": "stepfun2025/vllm:step-audio-2-v20250909",
-        "volumeInGb": args.volume_gb,
         "containerDiskInGb": args.container_disk_gb,
         "ports": ports,
         "supportPublicIp": True,
@@ -130,6 +189,14 @@ def create_pod(api_key: str, args: argparse.Namespace) -> dict[str, Any]:
         "dockerStartCmd": ["bash", "-lc", build_start_command()],
         "env": env,
     }
+    if data_center_ids:
+        payload["dataCenterIds"] = data_center_ids
+        payload["dataCenterPriority"] = "custom"
+    if args.network_volume_id:
+        payload["networkVolumeId"] = args.network_volume_id.strip()
+        payload["volumeMountPath"] = "/workspace"
+    else:
+        payload["volumeInGb"] = args.volume_gb
 
     return api_request(api_key, "POST", "/pods", payload)
 
